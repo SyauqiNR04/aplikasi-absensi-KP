@@ -227,7 +227,7 @@ class _CameraScreenState extends State<CameraScreen> {
       });
 
       String apiUrl =
-          "http://10.46.249.83/backend-absensi/public/api/attendances";
+          "http://192.168.100.234/backend-absensi/public/api/attendances";
 
       var response = await http.post(
         Uri.parse(apiUrl),
