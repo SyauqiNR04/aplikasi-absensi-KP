@@ -219,7 +219,9 @@ class _CameraScreenState extends State<CameraScreen> {
       });
 
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
 
       setState(() {
@@ -246,7 +248,8 @@ class _CameraScreenState extends State<CameraScreen> {
         isAbsensiSelesai = true;
 
         if (response.statusCode == 201) {
-          statusPesan = "BERHASIL!\nJarak: ${data['jarak_anda']}";
+          statusPesan =
+              "BERHASIL!\nJarak anda: ${data['jarak_anda']} dari kantor";
         } else {
           statusPesan = "Gagal: ${data['detail'] ?? data['message']}";
         }
