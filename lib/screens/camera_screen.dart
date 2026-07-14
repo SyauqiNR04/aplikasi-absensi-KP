@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart';
 
 class CameraScreen extends StatefulWidget {
@@ -113,28 +114,21 @@ class _CameraScreenState extends State<CameraScreen> {
         bytes: bytes,
         metadata: inputImageData,
       );
-
       final List<Face> faces = await _faceDetector.processImage(inputImage);
 
       if (mounted && !isLoading && !isAbsensiSelesai) {
         setState(() {
           if (faces.isNotEmpty) {
             Face face = faces.first;
-
             if (!isBlinked) {
               double? mataKiri = face.leftEyeOpenProbability;
               double? mataKanan = face.rightEyeOpenProbability;
-
               if (mataKiri != null && mataKanan != null) {
                 if (mataKiri < 0.2 && mataKanan < 0.2) {
                   isEyeClosed = true;
-                }
-                // Toleransi mata sipit (0.55)
-                else if (isEyeClosed && mataKiri > 0.55 && mataKanan > 0.55) {
+                } else if (isEyeClosed && mataKiri > 0.55 && mataKanan > 0.55)
                   isBlinked = true;
-                }
               }
-
               if (!isBlinked) {
                 isFaceDetected = false;
                 statusPesan = "Wajah terdeteksi.\nSilakan KEDIPKAN MATA Anda!";
@@ -179,87 +173,61 @@ class _CameraScreenState extends State<CameraScreen> {
       statusPesan = "Mengambil foto bukti...";
     });
 
-    String base64Image = "";
-
     try {
-      // LOGIKA BARU: Hentikan aliran video sejenak untuk mengambil foto statis
       await _controller!.stopImageStream();
       XFile fotoFile = await _controller!.takePicture();
 
-      // LOGIKA BARU: Ubah file gambar menjadi teks Base64
-      List<int> imageBytes = await fotoFile.readAsBytes();
-      base64Image = base64Encode(imageBytes);
-
-      setState(() {
-        statusPesan = "Memeriksa izin lokasi...";
-      });
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          setState(() {
-            statusPesan = "Akses lokasi ditolak.";
-            isLoading = false;
-          });
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        setState(() {
-          statusPesan = "Akses lokasi diblokir permanen.";
-          isLoading = false;
-        });
-        return;
-      }
-
-      setState(() {
-        statusPesan = "Mencatat lokasi satelit...";
-      });
+      setState(() => statusPesan = "Mencatat lokasi...");
 
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
 
-      setState(() {
-        statusPesan = "Mengirim data & foto ke server...";
-      });
+      setState(() => statusPesan = "Mengirim data ke server...");
+
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString('token');
 
       String apiUrl =
           "http://10.46.249.83/backend-absensi/public/api/attendances";
 
-      var response = await http.post(
-        Uri.parse(apiUrl),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "nip": "TA-2026-001",
-          "latitude": position.latitude,
-          "longitude": position.longitude,
-          "image": base64Image, // LOGIKA BARU: Mengirimkan teks foto ke Laravel
-        }),
+      var request = http.MultipartRequest('POST', Uri.parse(apiUrl));
+      request.headers.addAll({
+        "Accept": "application/json",
+        "Authorization": "Bearer $token",
+      });
+
+      request.fields['nip'] = "TA-2026-001";
+      request.fields['latitude'] = position.latitude.toString();
+      request.fields['longitude'] = position.longitude.toString();
+      request.files.add(
+        await http.MultipartFile.fromPath('foto', fotoFile.path),
       );
 
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
       var data = jsonDecode(response.body);
 
       setState(() {
         isAbsensiSelesai = true;
-
-        if (response.statusCode == 201) {
-          statusPesan = "BERHASIL!\nJarak: ${data['jarak_anda']}";
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          String jarak = (data['data'] != null)
+              ? data['data']['jarak_meter'].toString()
+              : '?';
+          statusPesan = "BERHASIL!\nJarak Anda: $jarak meter dari kantor";
         } else {
-          statusPesan = "Gagal: ${data['detail'] ?? data['message']}";
+          statusPesan = "Gagal: ${data['message'] ?? 'Terjadi kesalahan'}";
         }
       });
     } catch (e) {
       setState(() {
         isAbsensiSelesai = true;
-        statusPesan = "Terjadi kesalahan koneksi server: $e";
+        statusPesan = "Error: $e";
       });
     } finally {
-      setState(() {
-        isLoading = false;
-      });
+      setState(() => isLoading = false);
     }
   }
 
@@ -281,7 +249,6 @@ class _CameraScreenState extends State<CameraScreen> {
                     ),
             ),
           ),
-
           Expanded(
             flex: 2,
             child: Container(
@@ -306,7 +273,6 @@ class _CameraScreenState extends State<CameraScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
-
                   if (isAbsensiSelesai)
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
@@ -316,12 +282,10 @@ class _CameraScreenState extends State<CameraScreen> {
                         ),
                         backgroundColor: Colors.blue,
                       ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                      },
+                      onPressed: () => Navigator.pop(context),
                       child: const Text(
-                        "KEMBALI KE DASHBOARD",
-                        style: TextStyle(fontSize: 16, color: Colors.white),
+                        "KEMBALI",
+                        style: TextStyle(color: Colors.white),
                       ),
                     )
                   else if (isLoading)
@@ -340,7 +304,7 @@ class _CameraScreenState extends State<CameraScreen> {
                       onPressed: isFaceDetected ? _prosesAbsensi : null,
                       child: const Text(
                         "KIRIM DATA ABSENSI",
-                        style: TextStyle(fontSize: 16, color: Colors.white),
+                        style: TextStyle(color: Colors.white),
                       ),
                     ),
                 ],
