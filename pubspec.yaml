@@ -40,9 +40,22 @@ dependencies:
   google_mlkit_face_detection: ^0.13.2
   shared_preferences: ^2.5.5
 
+  # --- Keamanan (security hardening phase 1-5) ---
+  flutter_secure_storage: ^10.0.0
+  safe_device: ^1.2.1
+  app_device_integrity: ^1.1.0
+
+  # --- Modul face recognition ---
+  dio: ^5.7.0
+  image: ^4.3.0
+  tflite_flutter: ^0.11.0
+  path_provider: ^2.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+  mocktail: ^1.0.4
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -61,6 +74,14 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Aktifkan setelah file asetnya benar-benar ada; Flutter gagal build bila
+  # aset yang dideklarasikan tidak ditemukan.
+  #   server_ca.pem       -> ekspor sertifikat server, dipakai certificate pinning
+  #   mobilefacenet.tflite -> model embedding, dipakai EmbeddingFaceMatcher
+  # assets:
+  #   - assets/certs/server_ca.pem
+  #   - assets/models/mobilefacenet.tflite
 
   # To add assets to your application, add an assets section, like this:
   # assets:

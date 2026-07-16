@@ -37,7 +37,6 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Absensi TA',
       theme: ThemeData(
-        fontFamily: 'Manrope',
         primaryColor: const Color(
           0xFF14422D,
         ), // Menggunakan warna hijau gelap dari template

@@ -2,37 +2,29 @@ import 'package:flutter/material.dart';
 import '../constants/app_styles.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/camera_screen.dart';
-import '../pages/riwayat_absensi.dart';
+import '../screens/riwayat_absensi.dart';
+import '../screens/settings_screen.dart';
 
 class CustomBottomNav extends StatelessWidget {
   final int activeIndex;
 
   const CustomBottomNav({super.key, required this.activeIndex});
 
+  // Logika Navigasi
   void _onTap(BuildContext context, int index) {
-    if (index == activeIndex)
-      return; // Jangan lakukan apa-apa jika menekan menu yang sedang aktif
+    if (index == activeIndex) return;
 
-    // Logika pindah halaman tanpa menumpuk rute (menggunakan pushReplacement)
-    if (index == 0) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const DashboardScreen()),
-      );
-    } else if (index == 1) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const RiwayatAbsensiPage(nip: 'TA-2026-001'),
-        ),
-      );
-    } else if (index == 2) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const CameraScreen()),
-      );
-    }
-    // Tambahkan index 3 (Reports) dan 4 (Settings) nanti jika halamannya sudah dibuat
+    final List<Widget> pages = [
+      const DashboardScreen(), // Index 0
+      const CameraScreen(), // Index 1
+      const RiwayatAbsensiPage(nip: 'TA-2026-001'), // Index 2
+      const SettingsScreen(), // Index 3
+    ];
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => pages[index]),
+    );
   }
 
   @override
@@ -40,8 +32,15 @@ class CustomBottomNav extends StatelessWidget {
     return Container(
       height: 70,
       decoration: const BoxDecoration(
-        color: AppColors.bgScaffold,
+        color: Colors.white, // Menggunakan warna putih bersih
         border: Border(top: BorderSide(color: AppColors.borderLight, width: 1)),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x142D5A43),
+            blurRadius: 12,
+            offset: Offset(0, -4),
+          ),
+        ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -49,32 +48,26 @@ class CustomBottomNav extends StatelessWidget {
           _buildNavItem(
             Icons.home_outlined,
             "Home",
-            activeIndex == 0,
+            0,
             () => _onTap(context, 0),
           ),
           _buildNavItem(
-            Icons.history,
-            "History",
-            activeIndex == 1,
-            () => _onTap(context, 1),
-          ),
-          _buildNavItem(
-            Icons.fact_check,
+            Icons.fact_check_outlined,
             "Verify",
-            activeIndex == 2,
-            () => _onTap(context, 2),
+            1,
+            () => _onTap(context, 1),
           ),
           _buildNavItem(
             Icons.bar_chart,
             "Reports",
-            activeIndex == 3,
-            () => _onTap(context, 3),
+            2,
+            () => _onTap(context, 2),
           ),
           _buildNavItem(
-            Icons.settings,
+            Icons.settings_outlined,
             "Settings",
-            activeIndex == 4,
-            () => _onTap(context, 4),
+            3,
+            () => _onTap(context, 3),
           ),
         ],
       ),
@@ -84,24 +77,30 @@ class CustomBottomNav extends StatelessWidget {
   Widget _buildNavItem(
     IconData icon,
     String label,
-    bool isActive,
+    int index,
     VoidCallback onTap,
   ) {
+    final bool isActive = activeIndex == index;
+
     return InkWell(
       onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             decoration: BoxDecoration(
-              color: isActive ? const Color(0x4DFDC74E) : Colors.transparent,
+              // Menggunakan warna dari AppColors agar clean
+              color: isActive
+                  ? AppColors.goldLight.withValues(alpha: 0.3)
+                  : Colors.transparent,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               icon,
               color: isActive ? AppColors.darkGreen : AppColors.textGrey,
-              size: 22,
+              size: 24,
             ),
           ),
           const SizedBox(height: 4),
@@ -109,7 +108,7 @@ class CustomBottomNav extends StatelessWidget {
             label,
             style: TextStyle(
               color: isActive ? AppColors.darkGreen : AppColors.textGrey,
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
           ),

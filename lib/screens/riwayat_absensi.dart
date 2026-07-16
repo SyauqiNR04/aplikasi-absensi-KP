@@ -3,6 +3,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../constants/app_styles.dart'; // Import File Warna Global
+import '../widgets/custom_bottom_nav.dart'; // Import Custom Bottom Nav
+
 class RiwayatAbsensiPage extends StatefulWidget {
   final String nip;
   const RiwayatAbsensiPage({super.key, required this.nip});
@@ -23,6 +26,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
     fetchHistory();
   }
 
+  // === FUNGSI AMBIL DATA RIWAYAT ===
   Future<void> fetchHistory() async {
     final url = Uri.parse('$baseUrl/api/history');
 
@@ -113,32 +117,11 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
 
   @override
   Widget build(BuildContext context) {
-    const Color bgScaffold = Color(0xFFF8F9FF);
-    const Color darkGreen = Color(0xFF14422D);
-    const Color textDark = Color(0xFF0B1C30);
-    const Color textGrey = Color(0xFF414943);
-    const Color borderLight = Color(0xFFC0C9C1);
-
     return Scaffold(
-      backgroundColor: bgScaffold,
-      // === BOTTOM NAVIGATION BAR ===
-      bottomNavigationBar: Container(
-        height: 70,
-        decoration: const BoxDecoration(
-          color: bgScaffold,
-          border: Border(top: BorderSide(color: borderLight, width: 1)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildNavItem(Icons.home_outlined, "Home", false),
-            _buildNavItem(Icons.history, "History", true), // History Active
-            _buildNavItem(Icons.fact_check_outlined, "Verify", false),
-            _buildNavItem(Icons.bar_chart, "Reports", false),
-            _buildNavItem(Icons.settings, "Settings", false),
-          ],
-        ),
-      ),
+      backgroundColor: AppColors.bgScaffold,
+      // ---> SANGAT BERSIH: Bottom Nav terpusat (Index 1 untuk History) <---
+      bottomNavigationBar: const CustomBottomNav(activeIndex: 2),
+
       body: SafeArea(
         child: Column(
           children: [
@@ -146,7 +129,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               decoration: const BoxDecoration(
-                color: bgScaffold,
+                color: AppColors.bgScaffold,
                 boxShadow: [
                   BoxShadow(
                     color: Color(0x0C000000),
@@ -164,7 +147,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                         width: 32,
                         height: 32,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF2D5A43),
+                          color: AppColors.accentGreen,
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: const Icon(
@@ -177,7 +160,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                       const Text(
                         "Attendance Pro",
                         style: TextStyle(
-                          color: darkGreen,
+                          color: AppColors.darkGreen,
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
@@ -185,7 +168,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                     ],
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: darkGreen),
+                    icon: const Icon(Icons.close, color: AppColors.darkGreen),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -196,7 +179,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
             Expanded(
               child: RefreshIndicator(
                 onRefresh: fetchHistory,
-                color: darkGreen,
+                color: AppColors.darkGreen,
                 child: SingleChildScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.all(20),
@@ -207,7 +190,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                       const Text(
                         "Reports & History",
                         style: TextStyle(
-                          color: textDark,
+                          color: AppColors.textDark,
                           fontSize: 26,
                           fontWeight: FontWeight.bold,
                         ),
@@ -215,7 +198,10 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                       const SizedBox(height: 4),
                       const Text(
                         "Review and manage your attendance records",
-                        style: TextStyle(color: textGrey, fontSize: 14),
+                        style: TextStyle(
+                          color: AppColors.textGrey,
+                          fontSize: 14,
+                        ),
                       ),
                       const SizedBox(height: 16),
 
@@ -228,7 +214,9 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 12,
                                 ),
-                                side: const BorderSide(color: borderLight),
+                                side: const BorderSide(
+                                  color: AppColors.borderLight,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -236,13 +224,13 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                               onPressed: () {},
                               icon: const Icon(
                                 Icons.file_download_outlined,
-                                color: darkGreen,
+                                color: AppColors.darkGreen,
                                 size: 18,
                               ),
                               label: const Text(
                                 "Export to Excel",
                                 style: TextStyle(
-                                  color: darkGreen,
+                                  color: AppColors.darkGreen,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -252,7 +240,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                           Expanded(
                             child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: darkGreen,
+                                backgroundColor: AppColors.darkGreen,
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 12,
                                 ),
@@ -286,7 +274,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: borderLight.withValues(alpha: 0.3),
+                            color: AppColors.borderLight.withValues(alpha: 0.3),
                           ),
                           boxShadow: const [
                             BoxShadow(
@@ -307,7 +295,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                               height: 48,
                               child: ElevatedButton.icon(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFFDC74E),
+                                  backgroundColor: AppColors.goldLight,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
@@ -340,7 +328,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: borderLight.withValues(alpha: 0.3),
+                            color: AppColors.borderLight.withValues(alpha: 0.3),
                           ),
                           boxShadow: const [
                             BoxShadow(
@@ -359,7 +347,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                   ? const Padding(
                                       padding: EdgeInsets.all(40),
                                       child: CircularProgressIndicator(
-                                        color: darkGreen,
+                                        color: AppColors.darkGreen,
                                       ),
                                     )
                                   : historyData.isEmpty
@@ -466,21 +454,21 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                                   Text(
                                                     dateParts[0],
                                                     style: const TextStyle(
-                                                      color: textDark,
+                                                      color: AppColors.textDark,
                                                       fontSize: 14,
                                                     ),
                                                   ),
                                                   Text(
                                                     dateParts[1],
                                                     style: const TextStyle(
-                                                      color: textDark,
+                                                      color: AppColors.textDark,
                                                       fontSize: 14,
                                                     ),
                                                   ),
                                                   Text(
                                                     dateParts[2],
                                                     style: const TextStyle(
-                                                      color: textDark,
+                                                      color: AppColors.textDark,
                                                       fontSize: 14,
                                                     ),
                                                   ),
@@ -498,7 +486,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                                     timeParts[0],
                                                     style: TextStyle(
                                                       color: isHadir
-                                                          ? textDark
+                                                          ? AppColors.textDark
                                                           : const Color(
                                                               0xFFBA1A1A,
                                                             ),
@@ -512,7 +500,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                                     timeParts[1],
                                                     style: TextStyle(
                                                       color: isHadir
-                                                          ? textDark
+                                                          ? AppColors.textDark
                                                           : const Color(
                                                               0xFFBA1A1A,
                                                             ),
@@ -532,14 +520,14 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                                   Text(
                                                     "--:--",
                                                     style: TextStyle(
-                                                      color: textGrey,
+                                                      color: AppColors.textGrey,
                                                       fontSize: 14,
                                                     ),
                                                   ),
                                                   Text(
                                                     "--",
                                                     style: TextStyle(
-                                                      color: textGrey,
+                                                      color: AppColors.textGrey,
                                                       fontSize: 14,
                                                     ),
                                                   ),
@@ -574,7 +562,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                               IconButton(
                                                 icon: const Icon(
                                                   Icons.location_on,
-                                                  color: darkGreen,
+                                                  color: AppColors.darkGreen,
                                                 ),
                                                 onPressed: () =>
                                                     _tampilkanDetailLokasi(
@@ -599,7 +587,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                   bottom: Radius.circular(12),
                                 ),
                                 border: Border(
-                                  top: BorderSide(color: borderLight),
+                                  top: BorderSide(color: AppColors.borderLight),
                                 ),
                               ),
                               child: Row(
@@ -609,7 +597,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                   Text(
                                     "Showing ${historyData.length} entries",
                                     style: const TextStyle(
-                                      color: textGrey,
+                                      color: AppColors.textGrey,
                                       fontSize: 14,
                                     ),
                                   ),
@@ -619,7 +607,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                         padding: const EdgeInsets.all(4),
                                         decoration: BoxDecoration(
                                           border: Border.all(
-                                            color: borderLight,
+                                            color: AppColors.borderLight,
                                           ),
                                           borderRadius: BorderRadius.circular(
                                             6,
@@ -627,7 +615,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                         ),
                                         child: const Icon(
                                           Icons.chevron_left,
-                                          color: borderLight,
+                                          color: AppColors.borderLight,
                                           size: 20,
                                         ),
                                       ),
@@ -636,7 +624,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                         padding: const EdgeInsets.all(4),
                                         decoration: BoxDecoration(
                                           border: Border.all(
-                                            color: borderLight,
+                                            color: AppColors.borderLight,
                                           ),
                                           borderRadius: BorderRadius.circular(
                                             6,
@@ -644,7 +632,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                         ),
                                         child: const Icon(
                                           Icons.chevron_right,
-                                          color: textDark,
+                                          color: AppColors.textDark,
                                           size: 20,
                                         ),
                                       ),
@@ -688,14 +676,17 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
           decoration: BoxDecoration(
             color: const Color(0xFFF8F9FF),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFC0C9C1)),
+            border: Border.all(color: AppColors.borderLight),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 hint,
-                style: const TextStyle(color: Color(0xFFC0C9C1), fontSize: 16),
+                style: const TextStyle(
+                  color: AppColors.borderLight,
+                  fontSize: 16,
+                ),
               ),
               const Icon(
                 Icons.calendar_today_outlined,
@@ -703,36 +694,6 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                 size: 18,
               ),
             ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // === WIDGET HELPER: NAV BOTTOM ===
-  Widget _buildNavItem(IconData icon, String label, bool isActive) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          decoration: BoxDecoration(
-            color: isActive ? const Color(0x4DFDC74E) : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(
-            icon,
-            color: isActive ? const Color(0xFF14422D) : const Color(0xFF414943),
-            size: 22,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            color: isActive ? const Color(0xFF14422D) : const Color(0xFF414943),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
           ),
         ),
       ],
@@ -757,7 +718,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
             "Detail Kehadiran",
             style: TextStyle(
               fontWeight: FontWeight.bold,
-              color: Color(0xFF14422D),
+              color: AppColors.darkGreen,
             ),
           ),
           content: Column(
@@ -817,7 +778,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
               child: const Text(
                 "Tutup",
                 style: TextStyle(
-                  color: Color(0xFF14422D),
+                  color: AppColors.darkGreen,
                   fontWeight: FontWeight.bold,
                 ),
               ),
