@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants/app_styles.dart';
 import 'dashboard_screen.dart';
-import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -185,28 +184,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const RegisterScreen(),
-                  ),
-                ),
-                child: RichText(
-                  text: const TextSpan(
-                    text: "Don't have an account? ",
-                    style: TextStyle(color: AppColors.textGrey),
-                    children: [
-                      TextSpan(
-                        text: "Register here",
-                        style: TextStyle(
-                          color: AppColors.goldAccent,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              // Akun karyawan dibuat oleh admin lewat dashboard web, bukan
+              // didaftarkan sendiri dari HP. Backend tidak punya endpoint
+              // registrasi publik.
+              const Text(
+                "Belum punya akun? Hubungi admin.",
+                style: TextStyle(color: AppColors.textGrey),
               ),
             ],
           ),
