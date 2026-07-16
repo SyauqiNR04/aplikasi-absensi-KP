@@ -7,6 +7,8 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart'; // Sesuaikan jika path berbeda
+import '../constants/app_styles.dart'; // Import File Warna Global
+import '../widgets/custom_bottom_nav.dart'; // Import Custom Bottom Nav
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -56,7 +58,7 @@ class _CameraScreenState extends State<CameraScreen>
     )..repeat(reverse: true);
   }
 
-  // === FUNGSI BARU: Cari GPS di Latar Belakang ===
+  // === FUNGSI: Cari GPS di Latar Belakang ===
   Future<void> _ambilLokasiBackground() async {
     try {
       Position position = await Geolocator.getCurrentPosition(
@@ -186,8 +188,9 @@ class _CameraScreenState extends State<CameraScreen>
             isBlinked = false;
             isEyeClosed = false;
             statusPesan = "Scanning face...";
-            if (!_scanAnimationController.isAnimating)
+            if (!_scanAnimationController.isAnimating) {
               _scanAnimationController.repeat(reverse: true);
+            }
           }
         });
       }
@@ -291,35 +294,17 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   Widget build(BuildContext context) {
-    const Color bgScaffold = Color(0xFFF8F9FF);
-    const Color darkGreen = Color(0xFF14422D);
-    const Color goldAccent = Color(0xFF7A5900);
-    const Color goldLight = Color(0xFFFDC74E);
-
-    Color activeColor = isBlinked ? darkGreen : goldAccent;
+    // === MENGGUNAKAN WARNA DARI APP_STYLES ===
+    Color activeColor = isBlinked ? AppColors.darkGreen : AppColors.goldAccent;
     Color activeLightColor = isBlinked
         ? const Color(0xFFDCE9FF)
         : const Color(0x33FDC74E);
 
     return Scaffold(
-      backgroundColor: bgScaffold,
-      bottomNavigationBar: Container(
-        height: 70,
-        decoration: const BoxDecoration(
-          color: bgScaffold,
-          border: Border(top: BorderSide(color: Color(0xFFC0C9C1), width: 1)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildNavItem(Icons.home_outlined, "Home", false),
-            _buildNavItem(Icons.history, "History", false),
-            _buildNavItem(Icons.fact_check, "Verify", true),
-            _buildNavItem(Icons.bar_chart, "Reports", false),
-            _buildNavItem(Icons.settings, "Settings", false),
-          ],
-        ),
-      ),
+      backgroundColor: AppColors.bgScaffold,
+      // ---> SANGAT BERSIH: Bottom Nav sekarang hanya butuh 1 baris kode (Index 2 untuk Verify)! <---
+      bottomNavigationBar: const CustomBottomNav(activeIndex: 1),
+
       body: SafeArea(
         child: Column(
           children: [
@@ -327,7 +312,7 @@ class _CameraScreenState extends State<CameraScreen>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               decoration: const BoxDecoration(
-                color: bgScaffold,
+                color: AppColors.bgScaffold,
                 boxShadow: [
                   BoxShadow(
                     color: Color(0x0C000000),
@@ -347,11 +332,11 @@ class _CameraScreenState extends State<CameraScreen>
                         decoration: BoxDecoration(
                           color: const Color(0xFFE5EEFF),
                           shape: BoxShape.circle,
-                          border: Border.all(color: const Color(0xFFC0C9C1)),
+                          border: Border.all(color: AppColors.borderLight),
                         ),
                         child: const Icon(
                           Icons.shield,
-                          color: darkGreen,
+                          color: AppColors.darkGreen,
                           size: 18,
                         ),
                       ),
@@ -359,7 +344,7 @@ class _CameraScreenState extends State<CameraScreen>
                       const Text(
                         "Attendance Pro",
                         style: TextStyle(
-                          color: darkGreen,
+                          color: AppColors.darkGreen,
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
@@ -367,7 +352,7 @@ class _CameraScreenState extends State<CameraScreen>
                     ],
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: darkGreen),
+                    icon: const Icon(Icons.close, color: AppColors.darkGreen),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -392,7 +377,7 @@ class _CameraScreenState extends State<CameraScreen>
                               ? "GPS location\nverified"
                               : "Mencari\nlokasi...",
                           _userPosition != null
-                              ? darkGreen
+                              ? AppColors.darkGreen
                               : Colors.orange.shade800,
                           _userPosition != null
                               ? const Color(0xFFDCE9FF)
@@ -455,7 +440,7 @@ class _CameraScreenState extends State<CameraScreen>
                                     )
                                   : const Center(
                                       child: CircularProgressIndicator(
-                                        color: darkGreen,
+                                        color: AppColors.darkGreen,
                                       ),
                                     ),
                             ),
@@ -526,10 +511,10 @@ class _CameraScreenState extends State<CameraScreen>
                                             child: Container(
                                               height: 3,
                                               decoration: BoxDecoration(
-                                                color: goldLight,
+                                                color: AppColors.goldLight,
                                                 boxShadow: const [
                                                   BoxShadow(
-                                                    color: goldLight,
+                                                    color: AppColors.goldLight,
                                                     blurRadius: 10,
                                                     spreadRadius: 2,
                                                   ),
@@ -565,7 +550,7 @@ class _CameraScreenState extends State<CameraScreen>
                                         statusPesan,
                                         textAlign: TextAlign.center,
                                         style: const TextStyle(
-                                          color: darkGreen,
+                                          color: AppColors.darkGreen,
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -578,7 +563,9 @@ class _CameraScreenState extends State<CameraScreen>
                                         vertical: 12,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: darkGreen.withValues(alpha: 0.9),
+                                        color: AppColors.darkGreen.withValues(
+                                          alpha: 0.9,
+                                        ),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: const Row(
@@ -606,7 +593,7 @@ class _CameraScreenState extends State<CameraScreen>
                                   : isBlinked
                                   ? ElevatedButton.icon(
                                       style: ElevatedButton.styleFrom(
-                                        backgroundColor: darkGreen,
+                                        backgroundColor: AppColors.darkGreen,
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 32,
                                           vertical: 16,
@@ -617,7 +604,7 @@ class _CameraScreenState extends State<CameraScreen>
                                           ),
                                         ),
                                       ),
-                                      // Tombol akan mati jika GPS masih loading (jarang terjadi tapi aman)
+                                      // Tombol akan mati jika GPS masih loading
                                       onPressed: _isFetchingGps
                                           ? null
                                           : _prosesAbsensi,
@@ -651,7 +638,9 @@ class _CameraScreenState extends State<CameraScreen>
                                         vertical: 8,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: darkGreen.withValues(alpha: 0.9),
+                                        color: AppColors.darkGreen.withValues(
+                                          alpha: 0.9,
+                                        ),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: const Text(
@@ -675,7 +664,7 @@ class _CameraScreenState extends State<CameraScreen>
                           child: _buildInfoCard(
                             "DEVICE ID",
                             "AP-7704-B",
-                            darkGreen,
+                            AppColors.darkGreen,
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -683,7 +672,7 @@ class _CameraScreenState extends State<CameraScreen>
                           child: _buildInfoCard(
                             "TRUST SCORE",
                             "98.4% Secure",
-                            goldAccent,
+                            AppColors.goldAccent,
                           ),
                         ),
                       ],
@@ -698,6 +687,7 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
+  // === LOCAL HELPERS ===
   Widget _buildCorner(bool isTop, bool isLeft, Color color) {
     return Container(
       width: 32,
@@ -766,7 +756,7 @@ class _CameraScreenState extends State<CameraScreen>
           Text(
             title,
             style: const TextStyle(
-              color: Color(0xFF414943),
+              color: AppColors.textGrey,
               fontSize: 11,
               fontWeight: FontWeight.bold,
               letterSpacing: 0.6,
@@ -783,35 +773,6 @@ class _CameraScreenState extends State<CameraScreen>
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildNavItem(IconData icon, String label, bool isActive) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          decoration: BoxDecoration(
-            color: isActive ? const Color(0x4DFDC74E) : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(
-            icon,
-            color: isActive ? const Color(0xFF14422D) : const Color(0xFF414943),
-            size: 22,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            color: isActive ? const Color(0xFF14422D) : const Color(0xFF414943),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
     );
   }
 }
