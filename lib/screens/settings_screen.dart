@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../constants/app_styles.dart';
 import '../widgets/custom_bottom_nav.dart';
@@ -13,9 +14,32 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isBiometricEnabled = true;
   bool _isPushEnabled = true;
+  bool _isLoggingOut = false;
 
   Future<void> _logout() async {
+    setState(() => _isLoggingOut = true);
+
     SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? token = prefs.getString('token');
+
+    if (token != null && token.isNotEmpty) {
+      try {
+        await http
+            .post(
+              Uri.parse(
+                'http://192.168.100.234/backend-absensi/public/api/logout',
+              ),
+              headers: {
+                'Accept': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // Tetap hapus sesi lokal walau server tidak terjangkau.
+      }
+    }
+
     await prefs.remove('token');
     if (!mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
@@ -125,11 +149,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   side: const BorderSide(color: Colors.red),
                   minimumSize: const Size(double.infinity, 56),
                 ),
-                onPressed: _logout,
-                icon: const Icon(Icons.logout),
-                label: const Text(
-                  "Logout",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                onPressed: _isLoggingOut ? null : _logout,
+                icon: _isLoggingOut
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.logout),
+                label: Text(
+                  _isLoggingOut ? "Logging out..." : "Logout",
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],

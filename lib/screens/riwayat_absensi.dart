@@ -1,10 +1,16 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:excel/excel.dart' hide Border, BorderStyle;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:share_plus/share_plus.dart';
 
 import '../constants/app_styles.dart'; // Import File Warna Global
 import '../widgets/custom_bottom_nav.dart'; // Import Custom Bottom Nav
+import '../services/session_manager.dart';
 
 class RiwayatAbsensiPage extends StatefulWidget {
   final String nip;
@@ -20,6 +26,14 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
   List<dynamic> historyData = [];
   bool isLoading = true;
 
+  // === FILTER TANGGAL ===
+  DateTime? _filterStart;
+  DateTime? _filterEnd;
+  List<dynamic>? _filteredData;
+  bool _isExporting = false;
+
+  List<dynamic> get _visibleData => _filteredData ?? historyData;
+
   @override
   void initState() {
     super.initState();
@@ -28,7 +42,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
 
   // === FUNGSI AMBIL DATA RIWAYAT ===
   Future<void> fetchHistory() async {
-    final url = Uri.parse('$baseUrl/api/history');
+    final url = Uri.parse('$baseUrl/api/history/${widget.nip}');
 
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -55,12 +69,21 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
 
       if (!mounted) return;
 
+      if (response.statusCode == 401) {
+        setState(() => isLoading = false);
+        await SessionManager.forceLogout(context);
+        return;
+      }
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         setState(() {
           historyData = data['data'];
           isLoading = false;
         });
+        if (_filterStart != null || _filterEnd != null) {
+          _terapkanFilter();
+        }
       } else {
         setState(() => isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -79,7 +102,9 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
   // === HELPER PARSING TANGGAL ===
   List<String> _parseDate(String datetime) {
     try {
-      DateTime dt = DateTime.parse(datetime);
+      // .toLocal() wajib: server kirim UTC ("...Z"), tanpa ini jam yang
+      // ditampilkan akan mundur 7 jam (selisih WIB) dari waktu sebenarnya.
+      DateTime dt = DateTime.parse(datetime).toLocal();
       const months = [
         "Jan",
         "Feb",
@@ -103,7 +128,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
   // === HELPER PARSING JAM ===
   List<String> _parseTime(String datetime) {
     try {
-      DateTime dt = DateTime.parse(datetime);
+      DateTime dt = DateTime.parse(datetime).toLocal();
       int hour = dt.hour;
       String minute = dt.minute.toString().padLeft(2, '0');
       String period = hour >= 12 ? "PM" : "AM";
@@ -112,6 +137,186 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
       return ["$hourStr:$minute", period];
     } catch (e) {
       return ["--:--", "--"];
+    }
+  }
+
+  String _formatTanggalFilter(DateTime? d) {
+    if (d == null) return '';
+    return '${d.month.toString().padLeft(2, '0')}/'
+        '${d.day.toString().padLeft(2, '0')}/${d.year}';
+  }
+
+  Future<void> _pilihTanggal(bool isStart) async {
+    final now = DateTime.now();
+    final initial = isStart ? (_filterStart ?? now) : (_filterEnd ?? now);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year - 2),
+      lastDate: now,
+    );
+    if (picked == null) return;
+    setState(() {
+      if (isStart) {
+        _filterStart = picked;
+      } else {
+        _filterEnd = picked;
+      }
+    });
+  }
+
+  void _terapkanFilter() {
+    if (_filterStart == null && _filterEnd == null) {
+      setState(() => _filteredData = null);
+      return;
+    }
+    if (_filterStart != null &&
+        _filterEnd != null &&
+        _filterStart!.isAfter(_filterEnd!)) {
+      _snack('Date Range Start tidak boleh setelah Date Range End.');
+      return;
+    }
+
+    final start = _filterStart == null
+        ? null
+        : DateTime(_filterStart!.year, _filterStart!.month, _filterStart!.day);
+    final end = _filterEnd == null
+        ? null
+        : DateTime(
+            _filterEnd!.year,
+            _filterEnd!.month,
+            _filterEnd!.day,
+            23,
+            59,
+            59,
+          );
+
+    setState(() {
+      _filteredData = historyData.where((absen) {
+        final dt = DateTime.tryParse(
+          absen['waktu_absen']?.toString() ?? '',
+        )?.toLocal();
+        if (dt == null) return false;
+        if (start != null && dt.isBefore(start)) return false;
+        if (end != null && dt.isAfter(end)) return false;
+        return true;
+      }).toList();
+    });
+  }
+
+  void _resetFilter() {
+    setState(() {
+      _filterStart = null;
+      _filterEnd = null;
+      _filteredData = null;
+    });
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  List<List<String>> _dataUntukExport() {
+    return _visibleData.map<List<String>>((absen) {
+      final dt = DateTime.tryParse(
+        absen['waktu_absen']?.toString() ?? '',
+      )?.toLocal();
+      final tanggal = dt == null
+          ? '-'
+          : '${dt.year}-${dt.month.toString().padLeft(2, '0')}-'
+                '${dt.day.toString().padLeft(2, '0')}';
+      final jam = dt == null
+          ? '-'
+          : '${dt.hour.toString().padLeft(2, '0')}:'
+                '${dt.minute.toString().padLeft(2, '0')}';
+      return [
+        tanggal,
+        jam,
+        (absen['status'] ?? '-').toString(),
+        (absen['latitude'] ?? '-').toString(),
+        (absen['longitude'] ?? '-').toString(),
+      ];
+    }).toList();
+  }
+
+  Future<void> _exportExcel() async {
+    if (_visibleData.isEmpty) {
+      _snack('Tidak ada data untuk diekspor.');
+      return;
+    }
+    setState(() => _isExporting = true);
+    try {
+      final workbook = Excel.createExcel();
+      const sheetName = 'Riwayat Absensi';
+      final sheet = workbook[sheetName];
+      workbook.setDefaultSheet(sheetName);
+      if (workbook.sheets.containsKey('Sheet1') && sheetName != 'Sheet1') {
+        workbook.delete('Sheet1');
+      }
+
+      sheet.appendRow([
+        TextCellValue('Tanggal'),
+        TextCellValue('Jam'),
+        TextCellValue('Status'),
+        TextCellValue('Latitude'),
+        TextCellValue('Longitude'),
+      ]);
+      for (final row in _dataUntukExport()) {
+        sheet.appendRow(row.map(TextCellValue.new).toList());
+      }
+
+      final bytes = workbook.encode();
+      if (bytes == null) throw Exception('Gagal encode file Excel.');
+
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/riwayat_absensi_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      await File(path).writeAsBytes(bytes);
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(path)], text: 'Riwayat Absensi (Excel)'),
+      );
+    } catch (e) {
+      _snack('Gagal export Excel: $e');
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  Future<void> _exportPdf() async {
+    if (_visibleData.isEmpty) {
+      _snack('Tidak ada data untuk diekspor.');
+      return;
+    }
+    setState(() => _isExporting = true);
+    try {
+      final doc = pw.Document();
+      final rows = _dataUntukExport();
+
+      doc.addPage(
+        pw.MultiPage(
+          build: (context) => [
+            pw.Header(level: 0, text: 'Riwayat Absensi'),
+            pw.TableHelper.fromTextArray(
+              headers: ['Tanggal', 'Jam', 'Status', 'Latitude', 'Longitude'],
+              data: rows,
+            ),
+          ],
+        ),
+      );
+
+      final bytes = await doc.save();
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/riwayat_absensi_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      await File(path).writeAsBytes(bytes);
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(path)], text: 'Riwayat Absensi (PDF)'),
+      );
+    } catch (e) {
+      _snack('Gagal export PDF: $e');
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
     }
   }
 
@@ -221,12 +426,21 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              onPressed: () {},
-                              icon: const Icon(
-                                Icons.file_download_outlined,
-                                color: AppColors.darkGreen,
-                                size: 18,
-                              ),
+                              onPressed: _isExporting ? null : _exportExcel,
+                              icon: _isExporting
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppColors.darkGreen,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.file_download_outlined,
+                                      color: AppColors.darkGreen,
+                                      size: 18,
+                                    ),
                               label: const Text(
                                 "Export to Excel",
                                 style: TextStyle(
@@ -248,12 +462,21 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              onPressed: () {},
-                              icon: const Icon(
-                                Icons.picture_as_pdf_outlined,
-                                color: Colors.white,
-                                size: 18,
-                              ),
+                              onPressed: _isExporting ? null : _exportPdf,
+                              icon: _isExporting
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.picture_as_pdf_outlined,
+                                      color: Colors.white,
+                                      size: 18,
+                                    ),
                               label: const Text(
                                 "Export to PDF",
                                 style: TextStyle(
@@ -286,36 +509,82 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                         ),
                         child: Column(
                           children: [
-                            _buildFilterField("Date Range Start", "mm/dd/yyyy"),
+                            _buildFilterField(
+                              "Date Range Start",
+                              _formatTanggalFilter(_filterStart),
+                              onTap: () => _pilihTanggal(true),
+                              onClear: _filterStart == null
+                                  ? null
+                                  : () => setState(() => _filterStart = null),
+                            ),
                             const SizedBox(height: 16),
-                            _buildFilterField("Date Range End", "mm/dd/yyyy"),
+                            _buildFilterField(
+                              "Date Range End",
+                              _formatTanggalFilter(_filterEnd),
+                              onTap: () => _pilihTanggal(false),
+                              onClear: _filterEnd == null
+                                  ? null
+                                  : () => setState(() => _filterEnd = null),
+                            ),
                             const SizedBox(height: 16),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 48,
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.goldLight,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: SizedBox(
+                                    height: 48,
+                                    child: ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.goldLight,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                        elevation: 0,
+                                      ),
+                                      onPressed: _terapkanFilter,
+                                      icon: const Icon(
+                                        Icons.filter_list,
+                                        color: Color(0xFF725300),
+                                        size: 20,
+                                      ),
+                                      label: const Text(
+                                        "Apply Filters",
+                                        style: TextStyle(
+                                          color: Color(0xFF725300),
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                  elevation: 0,
                                 ),
-                                onPressed: () {},
-                                icon: const Icon(
-                                  Icons.filter_list,
-                                  color: Color(0xFF725300),
-                                  size: 20,
-                                ),
-                                label: const Text(
-                                  "Apply Filters",
-                                  style: TextStyle(
-                                    color: Color(0xFF725300),
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
+                                if (_filteredData != null ||
+                                    _filterStart != null ||
+                                    _filterEnd != null) ...[
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    height: 48,
+                                    child: OutlinedButton(
+                                      style: OutlinedButton.styleFrom(
+                                        side: const BorderSide(
+                                          color: AppColors.borderLight,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                      ),
+                                      onPressed: _resetFilter,
+                                      child: const Icon(
+                                        Icons.clear,
+                                        color: AppColors.textGrey,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
+                                ],
+                              ],
                             ),
                           ],
                         ),
@@ -350,10 +619,14 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                         color: AppColors.darkGreen,
                                       ),
                                     )
-                                  : historyData.isEmpty
-                                  ? const Padding(
-                                      padding: EdgeInsets.all(40),
-                                      child: Text("Belum ada data absensi."),
+                                  : _visibleData.isEmpty
+                                  ? Padding(
+                                      padding: const EdgeInsets.all(40),
+                                      child: Text(
+                                        historyData.isEmpty
+                                            ? "Belum ada data absensi."
+                                            : "Tidak ada data pada rentang tanggal ini.",
+                                      ),
                                     )
                                   : DataTable(
                                       headingRowColor: WidgetStateProperty.all(
@@ -421,13 +694,20 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                           ),
                                         ),
                                       ],
-                                      rows: historyData.map((absen) {
+                                      rows: _visibleData.map((absen) {
                                         List<String> dateParts = _parseDate(
                                           absen['waktu_absen'],
                                         );
                                         List<String> timeParts = _parseTime(
                                           absen['waktu_absen'],
                                         );
+                                        final waktuPulang =
+                                            absen['waktu_pulang'];
+                                        List<String> pulangParts =
+                                            (waktuPulang == null ||
+                                                waktuPulang == '')
+                                            ? ["--:--", "--"]
+                                            : _parseTime(waktuPulang);
 
                                         // Warna Status Dinamis
                                         bool isHadir =
@@ -516,17 +796,17 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                                     MainAxisAlignment.center,
                                                 crossAxisAlignment:
                                                     CrossAxisAlignment.start,
-                                                children: const [
+                                                children: [
                                                   Text(
-                                                    "--:--",
-                                                    style: TextStyle(
+                                                    pulangParts[0],
+                                                    style: const TextStyle(
                                                       color: AppColors.textGrey,
                                                       fontSize: 14,
                                                     ),
                                                   ),
                                                   Text(
-                                                    "--",
-                                                    style: TextStyle(
+                                                    pulangParts[1],
+                                                    style: const TextStyle(
                                                       color: AppColors.textGrey,
                                                       fontSize: 14,
                                                     ),
@@ -595,7 +875,7 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    "Showing ${historyData.length} entries",
+                                    "Showing ${_visibleData.length} entries",
                                     style: const TextStyle(
                                       color: AppColors.textGrey,
                                       fontSize: 14,
@@ -657,7 +937,13 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
   }
 
   // === WIDGET HELPER: TEXTFIELD FILTER ===
-  Widget _buildFilterField(String label, String hint) {
+  Widget _buildFilterField(
+    String label,
+    String value, {
+    required VoidCallback onTap,
+    VoidCallback? onClear,
+  }) {
+    final hasValue = value.isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -670,30 +956,46 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
           ),
         ),
         const SizedBox(height: 6),
-        Container(
-          height: 48,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8F9FF),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppColors.borderLight),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                hint,
-                style: const TextStyle(
-                  color: AppColors.borderLight,
-                  fontSize: 16,
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            height: 48,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FF),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  hasValue ? value : "mm/dd/yyyy",
+                  style: TextStyle(
+                    color: hasValue
+                        ? AppColors.textDark
+                        : AppColors.borderLight,
+                    fontSize: 16,
+                  ),
                 ),
-              ),
-              const Icon(
-                Icons.calendar_today_outlined,
-                color: Color(0xFF717973),
-                size: 18,
-              ),
-            ],
+                if (hasValue && onClear != null)
+                  InkWell(
+                    onTap: onClear,
+                    child: const Icon(
+                      Icons.close,
+                      color: Color(0xFF717973),
+                      size: 18,
+                    ),
+                  )
+                else
+                  const Icon(
+                    Icons.calendar_today_outlined,
+                    color: Color(0xFF717973),
+                    size: 18,
+                  ),
+              ],
+            ),
           ),
         ),
       ],
