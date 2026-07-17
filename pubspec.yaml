@@ -51,6 +51,11 @@ dependencies:
   tflite_flutter: ^0.11.0
   path_provider: ^2.1.4
 
+  # --- Export riwayat absensi (Excel/PDF) ---
+  excel: ^4.0.6
+  pdf: ^3.11.3
+  share_plus: ^13.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -75,13 +80,10 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Aktifkan setelah file asetnya benar-benar ada; Flutter gagal build bila
-  # aset yang dideklarasikan tidak ditemukan.
-  #   server_ca.pem       -> ekspor sertifikat server, dipakai certificate pinning
-  #   mobilefacenet.tflite -> model embedding, dipakai EmbeddingFaceMatcher
-  # assets:
-  #   - assets/certs/server_ca.pem
-  #   - assets/models/mobilefacenet.tflite
+  # server_ca.pem belum ada (certificate pinning belum dipakai) -> tetap off.
+  # mobilefacenet.tflite sudah ada -> dipakai EmbeddingFaceMatcher.
+  assets:
+    - assets/models/mobilefacenet.tflite
 
   # To add assets to your application, add an assets section, like this:
   # assets:

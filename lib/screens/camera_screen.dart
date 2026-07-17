@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,9 +11,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart'; // Sesuaikan jika path berbeda
 import '../constants/app_styles.dart'; // Import File Warna Global
 import '../widgets/custom_bottom_nav.dart'; // Import Custom Bottom Nav
+import '../services/liveness_challenge.dart';
+import '../services/face_verification_service.dart';
+import '../services/ml_kit_face_sample_extractor.dart';
+import '../services/session_manager.dart';
 
 class CameraScreen extends StatefulWidget {
-  const CameraScreen({super.key});
+  /// True kalau karyawan sudah absen masuk hari ini (jadi sesi ini adalah
+  /// absen PULANG). Server tetap yang menentukan aksi sesungguhnya (masuk
+  /// vs pulang) dari state di database -- ini cuma dipakai untuk label
+  /// tombol/pesan supaya user tidak bingung.
+  final bool isCheckOut;
+
+  const CameraScreen({super.key, this.isCheckOut = false});
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -23,22 +35,55 @@ class _CameraScreenState extends State<CameraScreen>
   bool isCameraInitialized = false;
   bool isLoading = false;
   bool isAbsensiSelesai = false;
-  String statusPesan = "Scanning face...";
 
   // Animasi Garis Scanner
   late AnimationController _scanAnimationController;
 
   final FaceDetector _faceDetector = FaceDetector(
-    options: FaceDetectorOptions(
-      enableContours: true,
-      enableClassification: true,
-    ),
+    options: LivenessChallengeController.recommendedStreamOptions(),
   );
 
+  // === LIVENESS CHALLENGE ACAK (kedip / tengok kiri / tengok kanan / senyum) ===
+  // mirrorFrontCamera perlu dikalibrasi di perangkat asli: jika arah tengok
+  // kiri/kanan terasa terbalik, ubah nilai ini.
+  final LivenessChallengeController _liveness = LivenessChallengeController(
+    challengeCount: 3,
+    // Dikalibrasi di device asli (Xiaomi/Redmi, kamera depan): arah
+    // tengok kiri/kanan yang dilaporkan ML Kit sudah sesuai tanpa mirror.
+    mirrorFrontCamera: false,
+  );
+  LivenessState _livenessState = LivenessState.idle;
+  StreamSubscription<LivenessState>? _livenessSub;
+
   bool isDetecting = false;
-  bool isFaceDetected = false;
-  bool isBlinked = false;
-  bool isEyeClosed = false;
+
+  // === FACE MATCHING (verifikasi identitas vs foto referensi karyawan) ===
+  static const _refPhotoUrl =
+      "http://192.168.100.234/backend-absensi/public/api/reference-photo";
+  FaceVerificationService? _faceVerification;
+  bool _isMatcherLoading = true;
+  String? _matcherLoadError;
+
+  // Pesan status selama proses ambil-foto & kirim-absensi (menimpa pesan
+  // liveness saat isLoading/isAbsensiSelesai aktif).
+  String? _captureStatusMessage;
+
+  String get statusPesan {
+    if (_captureStatusMessage != null) return _captureStatusMessage!;
+    switch (_livenessState.status) {
+      case LivenessStatus.idle:
+        return "Bersiap...";
+      case LivenessStatus.running:
+        return _livenessState.instruction;
+      case LivenessStatus.passed:
+        return "Verifikasi Asli!";
+      case LivenessStatus.failed:
+        return _livenessState.instruction;
+    }
+  }
+
+  bool get isBlinked => _livenessState.status == LivenessStatus.passed;
+  bool get isLivenessFailed => _livenessState.status == LivenessStatus.failed;
 
   // === VARIABEL BARU UNTUK LOKASI BACKGROUND ===
   Position? _userPosition;
@@ -47,7 +92,21 @@ class _CameraScreenState extends State<CameraScreen>
   @override
   void initState() {
     super.initState();
+
+    _livenessSub = _liveness.states.listen((state) {
+      if (!mounted) return;
+      setState(() => _livenessState = state);
+      if (state.status == LivenessStatus.running) {
+        if (!_scanAnimationController.isAnimating) {
+          _scanAnimationController.repeat(reverse: true);
+        }
+      } else {
+        _scanAnimationController.stop();
+      }
+    });
+
     _inisialisasiKamera();
+    _inisialisasiFaceVerification();
 
     // Langsung cari lokasi GPS di latar belakang saat halaman dibuka
     _ambilLokasiBackground();
@@ -56,6 +115,44 @@ class _CameraScreenState extends State<CameraScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
+  }
+
+  void _mulaiUlangLiveness() {
+    _liveness.start();
+  }
+
+  // === FUNGSI: Muat model MobileFaceNet + siapkan service face matching ===
+  Future<void> _inisialisasiFaceVerification() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      final matcher = await EmbeddingFaceMatcher.load();
+      final service = FaceVerificationService(
+        referenceProvider: HttpReferenceImageProvider(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+        extractor: MlKitFaceSampleExtractor(),
+        matcher: matcher,
+        matchThreshold: 0.80,
+      );
+
+      if (!mounted) {
+        await service.dispose();
+        return;
+      }
+      setState(() {
+        _faceVerification = service;
+        _isMatcherLoading = false;
+      });
+    } catch (e) {
+      debugPrint("Error memuat model face matching: $e");
+      if (!mounted) return;
+      setState(() {
+        _isMatcherLoading = false;
+        _matcherLoadError = "Gagal memuat model verifikasi wajah.";
+      });
+    }
   }
 
   // === FUNGSI: Cari GPS di Latar Belakang ===
@@ -102,19 +199,47 @@ class _CameraScreenState extends State<CameraScreen>
         isCameraInitialized = true;
       });
 
-      _controller!.startImageStream((CameraImage image) {
-        if (isLoading || isAbsensiSelesai) return;
-
-        if (!isDetecting) {
-          isDetecting = true;
-          _prosesDeteksiWajah(image, kameraDepan);
-        }
-      });
+      _liveness.start();
+      _mulaiStreamDeteksi(kameraDepan);
     } catch (e) {
       setState(() {
-        statusPesan = "Gagal buka kamera";
+        _captureStatusMessage = "Gagal buka kamera";
       });
     }
+  }
+
+  void _mulaiStreamDeteksi(CameraDescription camera) {
+    _controller!.startImageStream((CameraImage image) {
+      if (isLoading || isAbsensiSelesai) return;
+
+      if (!isDetecting) {
+        isDetecting = true;
+        _prosesDeteksiWajah(image, camera);
+      }
+    });
+  }
+
+  /// Reset layar absensi tanpa keluar dari halaman: dipakai tombol
+  /// "Absen Ulang" setelah wajah tidak cocok / gagal, atau setelah sukses
+  /// bila ingin absen device lain di sesi yang sama.
+  Future<void> _absenUlang() async {
+    setState(() {
+      isAbsensiSelesai = false;
+      isLoading = false;
+      _captureStatusMessage = null;
+    });
+
+    try {
+      if (_controller != null &&
+          _controller!.value.isInitialized &&
+          !_controller!.value.isStreamingImages) {
+        _mulaiStreamDeteksi(_controller!.description);
+      }
+    } catch (e) {
+      debugPrint("Error restart stream: $e");
+    }
+
+    _liveness.start();
   }
 
   Future<void> _prosesDeteksiWajah(
@@ -158,41 +283,7 @@ class _CameraScreenState extends State<CameraScreen>
       final List<Face> faces = await _faceDetector.processImage(inputImage);
 
       if (mounted && !isLoading && !isAbsensiSelesai) {
-        setState(() {
-          if (faces.isNotEmpty) {
-            Face face = faces.first;
-            if (!isBlinked) {
-              double? mataKiri = face.leftEyeOpenProbability;
-              double? mataKanan = face.rightEyeOpenProbability;
-              if (mataKiri != null && mataKanan != null) {
-                if (mataKiri < 0.2 && mataKanan < 0.2) {
-                  isEyeClosed = true;
-                } else if (isEyeClosed && mataKiri > 0.55 && mataKanan > 0.55) {
-                  isBlinked = true;
-                }
-              }
-              if (!isBlinked) {
-                isFaceDetected = false;
-                statusPesan = "Kedipkan Mata!";
-              } else {
-                isFaceDetected = true;
-                statusPesan = "Verifikasi Asli!";
-                _scanAnimationController.stop();
-              }
-            } else {
-              isFaceDetected = true;
-              statusPesan = "Verifikasi Asli!";
-            }
-          } else {
-            isFaceDetected = false;
-            isBlinked = false;
-            isEyeClosed = false;
-            statusPesan = "Scanning face...";
-            if (!_scanAnimationController.isAnimating) {
-              _scanAnimationController.repeat(reverse: true);
-            }
-          }
-        });
+        _liveness.onDetection(faces);
       }
     } catch (e) {
       debugPrint("Error AI: $e");
@@ -204,19 +295,57 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _prosesAbsensi() async {
     setState(() {
       isLoading = true;
-      statusPesan = "Menyiapkan data...";
+      _captureStatusMessage = "Menyiapkan data...";
     });
 
     try {
       await _controller!.stopImageStream();
       XFile fotoFile = await _controller!.takePicture();
 
+      // === FACE MATCHING: bandingkan wajah live dengan foto referensi ===
+      setState(() => _captureStatusMessage = "Memverifikasi wajah...");
+
+      final faceService = _faceVerification;
+      if (faceService == null) {
+        setState(() {
+          isAbsensiSelesai = true;
+          _captureStatusMessage = "Model verifikasi wajah belum siap.";
+        });
+        return;
+      }
+
+      final matchResult = await faceService.verifyFaceMatch(
+        File(fotoFile.path),
+        _refPhotoUrl,
+      );
+      if (!matchResult.isMatch) {
+        debugPrint(
+          "FaceMatch gagal: status=${matchResult.status} pesan_asli=${matchResult.message}",
+        );
+
+        // 401 saat mengunduh referensi = token mati, bukan foto bermasalah.
+        // Tanpa cabang ini, sesi kedaluwarsa muncul sebagai pesan yang
+        // menyesatkan ("foto referensi bermasalah, hubungi admin").
+        if (matchResult.status == FaceMatchStatus.referenceDownloadFailed &&
+            matchResult.message.contains('401')) {
+          if (!mounted) return;
+          await SessionManager.forceLogout(context);
+          return;
+        }
+
+        setState(() {
+          isAbsensiSelesai = true;
+          _captureStatusMessage = _pesanGagalVerifikasi(matchResult);
+        });
+        return;
+      }
+
       // === LOGIKA PENGGUNAAN LOKASI YANG DIPERBARUI ===
       Position finalPosition;
 
       // Jika GPS belum selesai mencari di background, tunggu sebentar di sini
       if (_userPosition == null) {
-        setState(() => statusPesan = "Menunggu akurasi GPS...");
+        setState(() => _captureStatusMessage = "Menunggu akurasi GPS...");
         finalPosition = await Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(
             accuracy: LocationAccuracy.high,
@@ -227,7 +356,7 @@ class _CameraScreenState extends State<CameraScreen>
         finalPosition = _userPosition!;
       }
 
-      setState(() => statusPesan = "Mengirim data...");
+      setState(() => _captureStatusMessage = "Mengirim data...");
 
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
@@ -235,7 +364,7 @@ class _CameraScreenState extends State<CameraScreen>
       if (token == null || token.isEmpty) {
         setState(() {
           isAbsensiSelesai = true;
-          statusPesan = "Error: Sesi login habis.";
+          _captureStatusMessage = "Error: Sesi login habis.";
         });
         return;
       }
@@ -260,30 +389,67 @@ class _CameraScreenState extends State<CameraScreen>
       var response = await http.Response.fromStream(streamedResponse);
       var data = jsonDecode(response.body);
 
+      if (response.statusCode == 401) {
+        if (!mounted) return;
+        await SessionManager.forceLogout(context);
+        return;
+      }
+
       setState(() {
         isAbsensiSelesai = true;
         if (response.statusCode == 200 || response.statusCode == 201) {
-          String jarak = (data['data'] != null)
-              ? data['data']['jarak_meter'].toString()
-              : '?';
-          statusPesan = "BERHASIL!\nJarak: $jarak m";
+          final resultData = data['data'];
+          final tipe = resultData?['type'];
+          if (tipe == 'pulang') {
+            final totalJam = resultData?['total_jam_kerja'] ?? '-';
+            _captureStatusMessage =
+                "ABSEN PULANG BERHASIL!\nTotal jam kerja: $totalJam";
+          } else {
+            final jarak = resultData?['jarak_meter']?.toString() ?? '?';
+            _captureStatusMessage = "ABSEN MASUK BERHASIL!\nJarak: $jarak m";
+          }
         } else {
-          statusPesan = "Gagal: ${data['message'] ?? 'Kesalahan server'}";
+          _captureStatusMessage = "Gagal: ${data['message'] ?? 'Kesalahan server'}";
         }
       });
     } catch (e) {
       setState(() {
         isAbsensiSelesai = true;
-        statusPesan = "Error jaringan";
+        _captureStatusMessage = "Error jaringan";
       });
     } finally {
       setState(() => isLoading = false);
     }
   }
 
+  /// Pesan gagal verifikasi wajah yang ramah pengguna (tanpa skor mentah).
+  String _pesanGagalVerifikasi(FaceMatchResult result) {
+    switch (result.status) {
+      case FaceMatchStatus.notMatched:
+        return "Wajah tidak dikenali sebagai kamu. Coba lagi.";
+      case FaceMatchStatus.noFaceInLiveImage:
+      case FaceMatchStatus.multipleFacesInLiveImage:
+      case FaceMatchStatus.lowQualityLiveImage:
+        return "Posisikan wajah ke dalam bingkai atau pastikan wajah "
+            "tidak terhalang rambut/masker, lalu coba lagi.";
+      case FaceMatchStatus.noFaceInReferenceImage:
+      case FaceMatchStatus.multipleFacesInReferenceImage:
+      case FaceMatchStatus.referenceDownloadFailed:
+        return "Foto referensi wajah bermasalah. Hubungi admin.";
+      case FaceMatchStatus.processingFailed:
+      case FaceMatchStatus.unexpectedError:
+        return "Terjadi kesalahan saat memverifikasi wajah. Coba lagi.";
+      case FaceMatchStatus.matched:
+        return "Verifikasi Asli!";
+    }
+  }
+
   @override
   void dispose() {
     _scanAnimationController.dispose();
+    _livenessSub?.cancel();
+    _liveness.dispose();
+    _faceVerification?.dispose();
     try {
       _controller?.stopImageStream();
     } catch (_) {}
@@ -295,9 +461,15 @@ class _CameraScreenState extends State<CameraScreen>
   @override
   Widget build(BuildContext context) {
     // === MENGGUNAKAN WARNA DARI APP_STYLES ===
-    Color activeColor = isBlinked ? AppColors.darkGreen : AppColors.goldAccent;
+    Color activeColor = isBlinked
+        ? AppColors.darkGreen
+        : isLivenessFailed
+        ? Colors.red.shade700
+        : AppColors.goldAccent;
     Color activeLightColor = isBlinked
         ? const Color(0xFFDCE9FF)
+        : isLivenessFailed
+        ? const Color(0x33E53935)
         : const Color(0x33FDC74E);
 
     return Scaffold(
@@ -388,7 +560,7 @@ class _CameraScreenState extends State<CameraScreen>
                           isBlinked
                               ? Icons.check_circle
                               : Icons.face_retouching_natural,
-                          statusPesan,
+                          isBlinked ? "Face: Verified" : "Face: Unverified",
                           activeColor,
                           activeLightColor,
                         ),
@@ -546,14 +718,48 @@ class _CameraScreenState extends State<CameraScreen>
                                         ),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
-                                      child: Text(
-                                        statusPesan,
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                          color: AppColors.darkGreen,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            statusPesan,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              color: AppColors.darkGreen,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 10),
+                                          ElevatedButton.icon(
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor:
+                                                  AppColors.darkGreen,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 20,
+                                                    vertical: 10,
+                                                  ),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                              ),
+                                            ),
+                                            onPressed: _absenUlang,
+                                            icon: const Icon(
+                                              Icons.refresh,
+                                              color: Colors.white,
+                                              size: 18,
+                                            ),
+                                            label: const Text(
+                                              "Absen Ulang",
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     )
                                   : isLoading
@@ -604,11 +810,11 @@ class _CameraScreenState extends State<CameraScreen>
                                           ),
                                         ),
                                       ),
-                                      // Tombol akan mati jika GPS masih loading
-                                      onPressed: _isFetchingGps
+                                      // Tombol akan mati jika GPS atau model verifikasi wajah masih loading
+                                      onPressed: (_isFetchingGps || _isMatcherLoading)
                                           ? null
                                           : _prosesAbsensi,
-                                      icon: _isFetchingGps
+                                      icon: (_isFetchingGps || _isMatcherLoading)
                                           ? const SizedBox(
                                               width: 20,
                                               height: 20,
@@ -622,10 +828,44 @@ class _CameraScreenState extends State<CameraScreen>
                                               color: Colors.white,
                                             ),
                                       label: Text(
-                                        _isFetchingGps
+                                        _matcherLoadError != null
+                                            ? _matcherLoadError!
+                                            : _isMatcherLoading
+                                            ? "Memuat model wajah..."
+                                            : _isFetchingGps
                                             ? "Menunggu GPS..."
-                                            : "CLOCK IN",
+                                            : (widget.isCheckOut
+                                                  ? "CLOCK OUT"
+                                                  : "CLOCK IN"),
                                         style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    )
+                                  : isLivenessFailed
+                                  ? ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.red.shade700,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 32,
+                                          vertical: 16,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                      ),
+                                      onPressed: _mulaiUlangLiveness,
+                                      icon: const Icon(
+                                        Icons.refresh,
+                                        color: Colors.white,
+                                      ),
+                                      label: const Text(
+                                        "Coba Lagi",
+                                        style: TextStyle(
                                           color: Colors.white,
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold,
@@ -643,9 +883,11 @@ class _CameraScreenState extends State<CameraScreen>
                                         ),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
-                                      child: const Text(
-                                        "Align your face within the frame",
-                                        style: TextStyle(
+                                      child: Text(
+                                        _livenessState.total == 0
+                                            ? statusPesan
+                                            : "$statusPesan  (${_livenessState.completed}/${_livenessState.total})",
+                                        style: const TextStyle(
                                           color: Colors.white,
                                           fontSize: 14,
                                         ),

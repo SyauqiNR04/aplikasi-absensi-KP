@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // Import layar dari folder screens
 import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
+import 'services/session_manager.dart';
 
 // Variabel global agar kamera bisa diakses dari file mana saja
 List<CameraDescription> globalCameras = [];
@@ -19,12 +20,19 @@ Future<void> main() async {
     debugPrint("Error mencari kamera: $e");
   }
 
-  // Cek sesi login (Apakah token Sanctum sudah tersimpan?)
+  // Cek sesi login. Adanya string token TIDAK cukup: token Sanctum punya
+  // masa berlaku, jadi harus diverifikasi ke server. Tanpa ini, app masuk
+  // dashboard dengan token mati dan semua API call dijawab 401.
   SharedPreferences prefs = await SharedPreferences.getInstance();
   String? token = prefs.getString('token');
 
-  // Jalankan aplikasi dan kirim status login
-  runApp(MyApp(isLoggedIn: token != null));
+  bool isLoggedIn = false;
+  if (token != null && token.isNotEmpty) {
+    isLoggedIn = await SessionManager.isTokenValid(token);
+    if (!isLoggedIn) await prefs.remove('token');
+  }
+
+  runApp(MyApp(isLoggedIn: isLoggedIn));
 }
 
 class MyApp extends StatelessWidget {
