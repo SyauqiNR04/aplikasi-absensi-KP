@@ -214,6 +214,15 @@ class LivenessChallengeController {
   Stream<LivenessState> get states => _controller.stream;
   LivenessState get state => _state;
 
+  /// Urutan aksi yang diminta pada sesi berjalan, mis. ["blink","smile"].
+  ///
+  /// Dilampirkan ke server sebagai bukti absensi. Karena urutannya diacak tiap
+  /// sesi, urutan yang selalu identik antar-absensi menjadi sinyal bahwa
+  /// prosesnya tidak benar-benar dijalankan (rekaman diputar ulang atau nilai
+  /// tetap hasil modifikasi aplikasi).
+  List<String> get sequenceNames =>
+      _sequence.map((d) => d.action.name).toList(growable: false);
+
   /// Mulai sesi baru: bangun urutan acak, mulai tantangan pertama.
   void start() {
     _sequence = _buildSequence();

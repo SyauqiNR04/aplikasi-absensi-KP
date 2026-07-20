@@ -21,10 +21,17 @@ class RiwayatAbsensiPage extends StatefulWidget {
 }
 
 class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
-  final String baseUrl = "http://192.168.100.234/backend-absensi/public";
+  // Satu sumber alamat server dengan layar lain, supaya saat IP backend
+  // berubah tidak ada endpoint yang tertinggal memakai host lama.
+  String get baseUrl => SessionManager.baseUrl;
 
   List<dynamic> historyData = [];
   bool isLoading = true;
+
+  /// Token untuk memuat foto absensi. Fotonya ada di disk privat dan hanya
+  /// bisa diambil lewat endpoint ber-token, sehingga Image.network harus
+  /// membawa header Authorization -- URL polos akan dijawab 401.
+  String? _token;
 
   // === FILTER TANGGAL ===
   DateTime? _filterStart;
@@ -47,6 +54,8 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
+
+      _token = token;
 
       if (token == null) {
         if (!mounted) return;
@@ -1004,10 +1013,12 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
 
   // === MODAL POPUP DETAIL LOKASI & FOTO ===
   void _tampilkanDetailLokasi(dynamic absen) {
-    bool hasFoto = absen['foto_bukti'] != null && absen['foto_bukti'] != "";
-    String fullImageUrl = hasFoto
-        ? "$baseUrl/storage/${absen['foto_bukti']}"
-        : "";
+    // URL datang dari server (foto_masuk_url), bukan dirakit dari path
+    // penyimpanan. Sebelumnya layar ini menebak "$baseUrl/storage/<path>",
+    // padahal foto absensi sudah dipindah ke disk privat -- sehingga setiap
+    // foto baru gagal dimuat dan hanya menyisakan ikon gambar rusak.
+    final String? fullImageUrl = absen['foto_masuk_url'] as String?;
+    final bool hasFoto = fullImageUrl != null && fullImageUrl.isNotEmpty;
 
     showDialog(
       context: context,
@@ -1031,6 +1042,12 @@ class _RiwayatAbsensiPageState extends State<RiwayatAbsensiPage> {
                   borderRadius: BorderRadius.circular(12),
                   child: Image.network(
                     fullImageUrl,
+                    // Endpoint fotonya ber-token: tanpa header ini server
+                    // menjawab 401 dan gambar tidak pernah tampil.
+                    headers: {
+                      if (_token != null) 'Authorization': 'Bearer $_token',
+                      'Accept': 'image/*',
+                    },
                     height: 200,
                     width: double.infinity,
                     fit: BoxFit.cover,

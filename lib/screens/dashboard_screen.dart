@@ -1,12 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../constants/app_styles.dart';
 import '../widgets/custom_bottom_nav.dart';
+import '../services/office_settings_service.dart';
 import '../services/session_manager.dart';
+import '../services/user_profile_service.dart';
 import 'camera_screen.dart';
+
+/// Posisi pengguna terhadap radius kantor.
+enum StatusJangkauan { memuat, didalam, diluar, izinDitolak, tidakDiketahui }
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -16,12 +23,26 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  static const _baseUrl = "http://192.168.100.234/backend-absensi/public";
+  // Alamat server memakai SessionManager agar tidak ada salinan kedua yang
+  // bisa tertinggal saat IP backend berubah.
+  static String get _baseUrl => SessionManager.baseUrl;
 
   Map<String, dynamic>? _attendance;
   bool _isLoadingToday = true;
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
+
+  // Identitas pengguna dari GET /api/user.
+  bool _isLoadingProfil = true;
+  String _nama = '-';
+  Uint8List? _fotoProfil;
+
+  // Aturan kantor dari GET /api/settings. Null selama dimuat atau bila gagal.
+  OfficeSettings? _office;
+
+  // Posisi terhadap geofence kantor.
+  StatusJangkauan _statusJangkauan = StatusJangkauan.memuat;
+  double? _jarakKeKantor;
 
   @override
   void initState() {
@@ -30,6 +51,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) setState(() => _now = DateTime.now());
     });
     _muatStatusHariIni();
+    _muatProfil();
+    _muatPengaturanKantor();
+  }
+
+  Future<void> _muatPengaturanKantor() async {
+    final office = await OfficeSettingsService.fetch();
+    if (!mounted) return;
+    setState(() => _office = office);
+    // Jarak baru bisa dihitung setelah titik pusat geofence diketahui.
+    await _hitungJangkauan();
+  }
+
+  /// Membandingkan posisi sekarang dengan titik kantor. Sebelumnya badge
+  /// "In Range" ditulis mati di UI — selalu mengklaim pengguna berada di dalam
+  /// radius tanpa pernah mengukurnya.
+  ///
+  /// Status "tidak diketahui" sengaja dibedakan dari "di luar radius": izin
+  /// lokasi ditolak bukan berarti pengguna jauh dari kantor, dan menyamakan
+  /// keduanya akan menyesatkan.
+  Future<void> _hitungJangkauan() async {
+    final office = _office;
+    if (office == null || !office.punyaKoordinat) {
+      if (mounted) {
+        setState(() => _statusJangkauan = StatusJangkauan.tidakDiketahui);
+      }
+      return;
+    }
+
+    try {
+      var izin = await Geolocator.checkPermission();
+      if (izin == LocationPermission.denied) {
+        izin = await Geolocator.requestPermission();
+      }
+      if (izin == LocationPermission.denied ||
+          izin == LocationPermission.deniedForever) {
+        if (mounted) {
+          setState(() => _statusJangkauan = StatusJangkauan.izinDitolak);
+        }
+        return;
+      }
+
+      final posisi = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      ).timeout(const Duration(seconds: 12));
+
+      final jarak = Geolocator.distanceBetween(
+        posisi.latitude,
+        posisi.longitude,
+        office.latitude!,
+        office.longitude!,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _jarakKeKantor = jarak;
+        _statusJangkauan = jarak <= office.radiusMeter
+            ? StatusJangkauan.didalam
+            : StatusJangkauan.diluar;
+      });
+    } catch (_) {
+      // GPS mati, timeout, atau plugin gagal — jangan mengklaim apa pun.
+      if (mounted) {
+        setState(() => _statusJangkauan = StatusJangkauan.tidakDiketahui);
+      }
+    }
+  }
+
+  Future<void> _muatProfil() async {
+    if (mounted) setState(() => _isLoadingProfil = true);
+
+    final hasil = await UserProfileService.fetch();
+    if (!mounted) return;
+
+    switch (hasil.status) {
+      case ProfileStatus.unauthorized:
+        setState(() => _isLoadingProfil = false);
+        await SessionManager.forceLogout(context);
+        return;
+      case ProfileStatus.failed:
+        // Sengaja tanpa Snackbar: _muatStatusHariIni() berjalan bersamaan dan
+        // sudah menandai kegagalan jaringan lewat tombol absen yang nonaktif.
+        setState(() => _isLoadingProfil = false);
+        return;
+      case ProfileStatus.ok:
+        setState(() {
+          _nama = hasil.profile!.nama;
+          _isLoadingProfil = false;
+        });
+    }
+
+    final foto = await UserProfileService.fetchPhoto();
+    if (!mounted || foto == null) return;
+    setState(() => _fotoProfil = foto);
+  }
+
+  /// Pull-to-refresh menyegarkan status absensi, profil, dan aturan kantor.
+  Future<void> _muatSemua() async {
+    await Future.wait([
+      _muatStatusHariIni(),
+      _muatProfil(),
+      _muatPengaturanKantor(),
+    ]);
   }
 
   @override
@@ -201,6 +326,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool get _tombolAktif => !_sudahAbsenPulang;
 
+  // === TAMPILAN BADGE JANGKAUAN ===
+
+  String get _labelJangkauan {
+    switch (_statusJangkauan) {
+      case StatusJangkauan.memuat:
+        return 'Mengecek lokasi...';
+      case StatusJangkauan.didalam:
+        return 'In Range';
+      case StatusJangkauan.diluar:
+        return 'Di luar radius ($_jarakTerbaca)';
+      case StatusJangkauan.izinDitolak:
+        return 'Izin lokasi ditolak';
+      case StatusJangkauan.tidakDiketahui:
+        return 'Lokasi tidak diketahui';
+    }
+  }
+
+  /// Di bawah 1 km angka meter masih bermakna; di atas itu terlalu panjang.
+  String get _jarakTerbaca {
+    final jarak = _jarakKeKantor;
+    if (jarak == null) return '-';
+    if (jarak < 1000) return '${jarak.round()} m';
+    return '${(jarak / 1000).toStringAsFixed(1)} km';
+  }
+
+  IconData get _ikonJangkauan {
+    switch (_statusJangkauan) {
+      case StatusJangkauan.memuat:
+        return Icons.location_searching;
+      case StatusJangkauan.didalam:
+        return Icons.check_circle;
+      case StatusJangkauan.diluar:
+        return Icons.cancel;
+      case StatusJangkauan.izinDitolak:
+      case StatusJangkauan.tidakDiketahui:
+        return Icons.help_outline;
+    }
+  }
+
+  Color get _warnaJangkauan {
+    switch (_statusJangkauan) {
+      case StatusJangkauan.didalam:
+        return AppColors.darkGreen;
+      case StatusJangkauan.diluar:
+        return const Color(0xFFBA1A1A);
+      case StatusJangkauan.memuat:
+      case StatusJangkauan.izinDitolak:
+      case StatusJangkauan.tidakDiketahui:
+        return AppColors.textGrey;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -208,7 +385,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       bottomNavigationBar: const CustomBottomNav(activeIndex: 0),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _muatStatusHariIni,
+          onRefresh: _muatSemua,
           color: AppColors.darkGreen,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -233,48 +410,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: const Color(0xFFBCEECF),
-                                width: 2,
-                              ),
-                              image: const DecorationImage(
-                                image: NetworkImage(
-                                  "https://placehold.co/100x100.png",
+                      // Expanded: nama asli bisa jauh lebih panjang dari
+                      // placeholder lama, dan tanpa ini Row akan overflow.
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: AppColors.borderLight,
+                                border: Border.all(
+                                  color: const Color(0xFFBCEECF),
+                                  width: 2,
                                 ),
-                                fit: BoxFit.cover,
+                                image: _fotoProfil != null
+                                    ? DecorationImage(
+                                        image: MemoryImage(_fotoProfil!),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
+                              ),
+                              child: _fotoProfil == null
+                                  ? const Icon(
+                                      Icons.person,
+                                      size: 22,
+                                      color: AppColors.darkGreen,
+                                    )
+                                  : null,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    "Good Morning,",
+                                    style: TextStyle(
+                                      color: AppColors.textGrey,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  _isLoadingProfil
+                                      ? const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            vertical: 6,
+                                          ),
+                                          child: SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: AppColors.darkGreen,
+                                            ),
+                                          ),
+                                        )
+                                      : Text(
+                                          _nama,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: AppColors.darkGreen,
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                ],
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "Good Morning,",
-                                style: TextStyle(
-                                  color: AppColors.textGrey,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                "Alex Rivera",
-                                style: TextStyle(
-                                  color: AppColors.darkGreen,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                       IconButton(
                         icon: const Icon(
@@ -453,18 +660,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ),
                                       borderRadius: BorderRadius.circular(20),
                                     ),
-                                    child: const Row(
+                                    child: Row(
                                       children: [
                                         Icon(
-                                          Icons.check_circle,
-                                          color: AppColors.darkGreen,
+                                          _ikonJangkauan,
+                                          color: _warnaJangkauan,
                                           size: 14,
                                         ),
-                                        SizedBox(width: 4),
+                                        const SizedBox(width: 4),
                                         Text(
-                                          "In Range",
+                                          _labelJangkauan,
                                           style: TextStyle(
-                                            color: AppColors.darkGreen,
+                                            color: _warnaJangkauan,
                                             fontSize: 12,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -479,28 +686,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               padding: const EdgeInsets.all(20),
                               child: Column(
                                 children: [
-                                  const Text(
-                                    "Kantor Utama",
-                                    style: TextStyle(
+                                  Text(
+                                    _office?.namaLokasi ?? '—',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
                                       color: AppColors.textDark,
                                       fontSize: 20,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                   const SizedBox(height: 4),
-                                  const Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.center,
+                                  // Subjudul memakai radius absensi, bukan nama
+                                  // kota: /api/settings tidak menyimpan alamat,
+                                  // dan radius lebih berguna karena itulah batas
+                                  // yang menentukan absen diterima atau ditolak.
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Icon(
-                                        Icons.location_on,
+                                      const Icon(
+                                        Icons.my_location,
                                         color: AppColors.textGrey,
                                         size: 14,
                                       ),
-                                      SizedBox(width: 4),
+                                      const SizedBox(width: 4),
                                       Text(
-                                        "Pekanbaru, Riau",
-                                        style: TextStyle(
+                                        _office == null
+                                            ? 'Memuat aturan kantor...'
+                                            : 'Radius absensi ${_office!.radiusMeter} meter',
+                                        style: const TextStyle(
                                           color: AppColors.textGrey,
                                           fontSize: 14,
                                         ),
@@ -525,7 +738,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                           ),
                                         ),
                                       ),
-                                      onPressed: (_isLoadingToday || !_tombolAktif)
+                                      onPressed:
+                                          (_isLoadingToday || !_tombolAktif)
                                           ? null
                                           : () => _keKamera(context),
                                       icon: const Icon(

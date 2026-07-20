@@ -159,5 +159,35 @@ void main() {
       await sub.cancel();
       c.dispose();
     });
+
+    // sequenceNames dikirim ke server sebagai bukti absensi: server menandai
+    // absensi yang urutannya terulang persis sebagai indikasi rekaman diputar
+    // ulang. Nama aksinya karena itu ikut menjadi kontrak dengan backend.
+    test('sequenceNames melaporkan urutan aksi sesi berjalan', () {
+      final c = build([
+        LivenessAction.blink,
+        LivenessAction.turnLeft,
+        LivenessAction.smile,
+      ]);
+
+      expect(c.sequenceNames, isEmpty, reason: 'sebelum start belum ada sesi');
+
+      c.start();
+      expect(c.sequenceNames, ['blink', 'turnLeft', 'smile']);
+      c.dispose();
+    });
+
+    test('sequenceNames tetap tersedia setelah liveness lolos', () {
+      // Bukti dilampirkan SETELAH sesi selesai, saat foto dikirim -- kalau
+      // urutannya ikut terhapus begitu lolos, server selalu menerima daftar
+      // kosong dan deteksi urutan berulang jadi tidak pernah bekerja.
+      final c = build([LivenessAction.smile]);
+      c.start();
+      c.onDetection([_face(smile: 0.9)]);
+
+      expect(c.state.status, LivenessStatus.passed);
+      expect(c.sequenceNames, ['smile']);
+      c.dispose();
+    });
   });
 }

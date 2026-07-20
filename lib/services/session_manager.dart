@@ -22,6 +22,13 @@ class SessionManager {
     return prefs.getString('token');
   }
 
+  /// Menyimpan token hasil rotasi (POST /api/refresh) ke tempat yang sama
+  /// dengan yang dibaca [token], supaya seluruh layar ikut memakai token baru.
+  static Future<void> saveToken(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('token', value);
+  }
+
   /// Verifikasi token ke server. True kalau masih valid.
   /// Kalau server tidak terjangkau, dianggap valid (jangan paksa logout
   /// hanya gara-gara jaringan lagi putus).

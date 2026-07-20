@@ -3,16 +3,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
-import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart'; // Sesuaikan jika path berbeda
 import '../constants/app_styles.dart'; // Import File Warna Global
 import '../widgets/custom_bottom_nav.dart'; // Import Custom Bottom Nav
 import '../services/liveness_challenge.dart';
 import '../services/face_verification_service.dart';
+import '../services/attendance_api_service.dart';
 import '../services/ml_kit_face_sample_extractor.dart';
 import '../services/session_manager.dart';
 
@@ -58,9 +57,13 @@ class _CameraScreenState extends State<CameraScreen>
   bool isDetecting = false;
 
   // === FACE MATCHING (verifikasi identitas vs foto referensi karyawan) ===
-  static const _refPhotoUrl =
-      "http://192.168.100.234/backend-absensi/public/api/reference-photo";
+  // Satu sumber alamat server dengan layar lain: saat IP backend berubah,
+  // tidak ada endpoint yang tertinggal memakai host lama.
+  static final _refPhotoUrl =
+      "${SessionManager.baseUrl}/api/reference-photo";
   FaceVerificationService? _faceVerification;
+
+  final AttendanceApiService _attendanceApi = AttendanceApiService();
   bool _isMatcherLoading = true;
   String? _matcherLoadError;
 
@@ -358,38 +361,22 @@ class _CameraScreenState extends State<CameraScreen>
 
       setState(() => _captureStatusMessage = "Mengirim data...");
 
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      String? token = prefs.getString('token');
-
-      if (token == null || token.isEmpty) {
-        setState(() {
-          isAbsensiSelesai = true;
-          _captureStatusMessage = "Error: Sesi login habis.";
-        });
-        return;
-      }
-
-      String apiUrl =
-          "http://192.168.100.234/backend-absensi/public/api/attendances";
-
-      var request = http.MultipartRequest('POST', Uri.parse(apiUrl));
-      request.headers.addAll({
-        "Accept": "application/json",
-        "Authorization": "Bearer $token",
-      });
-
-      request.fields['nip'] = "TA-2026-001";
-      request.fields['latitude'] = finalPosition.latitude.toString();
-      request.fields['longitude'] = finalPosition.longitude.toString();
-      request.files.add(
-        await http.MultipartFile.fromPath('foto', fotoFile.path),
+      // Pengiriman lewat AttendanceApiService, bukan MultipartRequest rakitan
+      // sendiri. Versi rakitan melewati gerbang integritas perangkat
+      // (root/emulator/Fake GPS) dan pemeriksaan HTTPS build rilis, sehingga
+      // kontrol-kontrol itu tidak pernah benar-benar berjalan saat absensi.
+      // Bukti verifikasi wajah juga dirakit di sana.
+      final hasil = await _attendanceApi.submitAttendance(
+        latitude: finalPosition.latitude,
+        longitude: finalPosition.longitude,
+        foto: File(fotoFile.path),
+        faceMatchScore: matchResult.similarity,
+        faceMatchThreshold: matchResult.threshold,
+        livenessPassed: _livenessState.status == LivenessStatus.passed,
+        livenessChallenges: _liveness.sequenceNames,
       );
 
-      var streamedResponse = await request.send();
-      var response = await http.Response.fromStream(streamedResponse);
-      var data = jsonDecode(response.body);
-
-      if (response.statusCode == 401) {
+      if (hasil.sessionExpired) {
         if (!mounted) return;
         await SessionManager.forceLogout(context);
         return;
@@ -397,20 +384,27 @@ class _CameraScreenState extends State<CameraScreen>
 
       setState(() {
         isAbsensiSelesai = true;
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          final resultData = data['data'];
-          final tipe = resultData?['type'];
+        if (hasil.success) {
+          final tipe = hasil.data?['type'];
           if (tipe == 'pulang') {
-            final totalJam = resultData?['total_jam_kerja'] ?? '-';
+            final totalJam = hasil.data?['total_jam_kerja'] ?? '-';
             _captureStatusMessage =
                 "ABSEN PULANG BERHASIL!\nTotal jam kerja: $totalJam";
           } else {
-            final jarak = resultData?['jarak_meter']?.toString() ?? '?';
+            final jarak = hasil.data?['jarak_meter']?.toString() ?? '?';
             _captureStatusMessage = "ABSEN MASUK BERHASIL!\nJarak: $jarak m";
           }
         } else {
-          _captureStatusMessage = "Gagal: ${data['message'] ?? 'Kesalahan server'}";
+          _captureStatusMessage = "Gagal: ${hasil.message}";
         }
+      });
+    } on AttendanceBlockedException catch (e) {
+      // Perangkat ditolak atau konfigurasi jaringan tidak aman: sebabnya
+      // spesifik dan bisa ditindaklanjuti, jadi jangan disamarkan sebagai
+      // "error jaringan" seperti sebelumnya.
+      setState(() {
+        isAbsensiSelesai = true;
+        _captureStatusMessage = "Gagal: ${e.message}";
       });
     } catch (e) {
       setState(() {
